@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Study Tool — Log In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<h1>Log In</h1>
+
+<form id="login-form" class="card">
+  <div>
+    <label for="email">Email</label><br>
+    <input type="email" id="email" name="email" required autocomplete="email">
+  </div>
+  <div>
+    <label for="password">Password</label><br>
+    <input type="password" id="password" name="password" required autocomplete="current-password">
+  </div>
+  <button type="submit" id="submit-btn">Log In</button>
+</form>
+
+<div id="error"></div>
+
+<p style="font-family: var(--font-sans); color: var(--color-text-muted); font-size: 0.92rem;">
+  Don't have an account? <a href="/signup.html">Sign up</a>
+</p>
+
+<script>
+const form = document.getElementById('login-form');
+const errorEl = document.getElementById('error');
+const submitBtn = document.getElementById('submit-btn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.style.display = 'none';
+  submitBtn.disabled = true;
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Login failed');
+    window.location.href = '/';
+  } catch (err) {
+    errorEl.style.display = 'block';
+    errorEl.textContent = err.message;
+    submitBtn.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>

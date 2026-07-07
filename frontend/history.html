@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Study Tool — History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav class="main-nav">
+  <div class="main-nav-links">
+    <a href="/">Upload</a>
+    <a href="/quiz.html">Quiz</a>
+    <a href="/history.html">History</a>
+  </div>
+  <div class="main-nav-account">
+    <span id="current-user-email"></span>
+    <a href="#" id="logout-link">Log Out</a>
+  </div>
+</nav>
+<script src="/static/nav.js"></script>
+
+<h1>Session History</h1>
+
+<div class="card">
+  <h2 style="margin-top:0;">Topic Performance</h2>
+  <div id="empty-performance" style="display:none;">No scored sessions yet.</div>
+  <table id="performance-table" style="display:none;">
+    <thead>
+      <tr><th>Topic</th><th>Scored Attempts</th><th>Average Score</th><th>Status</th></tr>
+    </thead>
+    <tbody id="performance-body"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Past Sessions</h2>
+  <div id="empty-sessions" style="display:none;">No completed sessions yet.</div>
+  <table id="sessions-table" style="display:none;">
+    <thead>
+      <tr><th>Date</th><th>Topics</th><th>Questions</th><th>Score</th></tr>
+    </thead>
+    <tbody id="sessions-body"></tbody>
+  </table>
+</div>
+
+<script>
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadPerformance() {
+  const res = await fetch('/api/topics/performance');
+  const rows = await res.json();
+
+  if (!rows.length) {
+    document.getElementById('empty-performance').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('performance-table').style.display = 'table';
+  document.getElementById('performance-body').innerHTML = rows.map(r => `
+    <tr>
+      <td>${escapeHtml(r.topic)}</td>
+      <td>${r.total_attempts}</td>
+      <td>${r.average_score !== null ? `<span class="score-value">${r.average_score}%</span>` : 'N/A'}</td>
+      <td>${r.needs_review
+        ? '<span class="status-dot needs-review">Needs Review</span>'
+        : '<span class="status-dot ok">OK</span>'}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadSessions() {
+  const res = await fetch('/api/sessions');
+  const rows = await res.json();
+
+  if (!rows.length) {
+    document.getElementById('empty-sessions').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('sessions-table').style.display = 'table';
+  document.getElementById('sessions-body').innerHTML = rows.map(r => `
+    <tr>
+      <td>${new Date(r.started_at).toLocaleString()}</td>
+      <td>${escapeHtml(r.topics)}</td>
+      <td>${r.total_questions}</td>
+      <td>${r.score !== null ? `<span class="score-value">${r.score}%</span>` : 'N/A'}</td>
+    </tr>
+  `).join('');
+}
+
+loadPerformance();
+loadSessions();
+</script>
+
+</body>
+</html>

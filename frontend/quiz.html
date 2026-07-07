@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Study Tool — Quiz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav class="main-nav">
+  <div class="main-nav-links">
+    <a href="/">Upload</a>
+    <a href="/quiz.html">Quiz</a>
+    <a href="/history.html">History</a>
+  </div>
+  <div class="main-nav-account">
+    <span id="current-user-email"></span>
+    <a href="#" id="logout-link">Log Out</a>
+  </div>
+</nav>
+<script src="/static/nav.js"></script>
+
+<h1>Quiz Session</h1>
+
+<div id="error"></div>
+
+<div id="topic-select" class="card">
+  <h2>Select topics</h2>
+  <div id="topic-list"></div>
+  <div style="margin-top:20px;">
+    <button id="start-btn" disabled>Start Session</button>
+  </div>
+</div>
+
+<div id="quiz-area" class="card" style="display:none;">
+  <div id="progress"></div>
+  <div class="type-badge" id="phase-badge"></div>
+  <div id="question-topic"></div>
+  <div id="question-text"></div>
+  <textarea id="answer-input" placeholder="Type your answer..."></textarea>
+  <div style="margin-top:14px;">
+    <button id="submit-answer-btn">Submit Answer</button>
+  </div>
+
+  <div id="feedback-card">
+    <div id="feedback-grade"></div>
+    <div id="feedback-text"></div>
+    <div id="concept-reveal" style="display:none;"></div>
+    <div style="margin-top:16px;">
+      <button id="continue-btn">Continue</button>
+    </div>
+  </div>
+</div>
+
+<div id="summary-card">
+  <h2 style="margin-top:0;">Session Complete</h2>
+  <div class="score" id="summary-score"></div>
+  <div id="summary-details"></div>
+  <div style="margin-top:20px;">
+    <a href="/quiz.html"><button>Start Another Session</button></a>
+  </div>
+</div>
+
+<script>
+const errorEl = document.getElementById('error');
+const topicSelectEl = document.getElementById('topic-select');
+const topicListEl = document.getElementById('topic-list');
+const startBtn = document.getElementById('start-btn');
+
+const quizAreaEl = document.getElementById('quiz-area');
+const progressEl = document.getElementById('progress');
+const phaseBadgeEl = document.getElementById('phase-badge');
+const questionTopicEl = document.getElementById('question-topic');
+const questionTextEl = document.getElementById('question-text');
+const answerInputEl = document.getElementById('answer-input');
+const submitAnswerBtn = document.getElementById('submit-answer-btn');
+
+const feedbackCardEl = document.getElementById('feedback-card');
+const feedbackGradeEl = document.getElementById('feedback-grade');
+const feedbackTextEl = document.getElementById('feedback-text');
+const conceptRevealEl = document.getElementById('concept-reveal');
+const continueBtn = document.getElementById('continue-btn');
+
+const summaryCardEl = document.getElementById('summary-card');
+const summaryScoreEl = document.getElementById('summary-score');
+const summaryDetailsEl = document.getElementById('summary-details');
+
+let sessionId = null;
+let currentQuestion = null;
+
+function showError(message) {
+  errorEl.style.display = 'block';
+  errorEl.textContent = message;
+}
+
+const PHASE_LABELS = {
+  calibration: 'Calibration',
+  main: 'Main Question',
+  followup_deeper: 'Follow-up · Deeper',
+  followup_remedial: 'Follow-up · Remedial',
+};
+
+const PHASE_BADGE_CLASS = {
+  calibration: 'calibration',
+  main: 'main',
+  followup_deeper: 'deeper',
+  followup_remedial: 'remedial',
+};
+
+// data.phase is coarse (calibration/main/complete) — only for the progress
+// line. The badge needs the finer-grained question_type, since a followup
+// question still reports phase "main" (it's part of the same main-quiz cycle).
+function renderProgress(phase, questionType, progress) {
+  phaseBadgeEl.textContent = PHASE_LABELS[questionType] || questionType;
+  phaseBadgeEl.className = 'type-badge ' + (PHASE_BADGE_CLASS[questionType] || '');
+  if (phase === 'calibration') {
+    progressEl.textContent = `Calibration ${progress.calibration_index + 1} of ${progress.calibration_total}`;
+  } else {
+    progressEl.textContent = `Main quiz: ${progress.main_completed} of ${progress.main_total} concepts completed`;
+  }
+}
+
+function renderQuestion(data) {
+  currentQuestion = data.question;
+  renderProgress(data.phase, data.question.question_type, data.progress);
+  questionTopicEl.textContent = data.question.topic;
+  questionTextEl.textContent = data.question.question_text;
+  answerInputEl.value = '';
+  feedbackCardEl.style.display = 'none';
+  quizAreaEl.style.display = 'block';
+  summaryCardEl.style.display = 'none';
+  submitAnswerBtn.disabled = false;
+  answerInputEl.disabled = false;
+  answerInputEl.focus();
+}
+
+function renderSummary(data) {
+  quizAreaEl.style.display = 'none';
+  summaryCardEl.style.display = 'block';
+  summaryScoreEl.textContent = data.score !== null ? `${data.score}%` : 'N/A';
+  summaryDetailsEl.textContent =
+    `${data.total_questions} scored questions` + (data.tier ? ` · calibration tier: ${data.tier}` : '');
+}
+
+function updateStartButtonState() {
+  const anyChecked = topicListEl.querySelectorAll('input:checked').length > 0;
+  startBtn.disabled = !anyChecked;
+}
+
+async function loadTopics() {
+  const res = await fetch('/api/topics');
+  const topics = await res.json();
+  if (!topics.length) {
+    showError('No topics available yet — generate a question bank for a document first.');
+    return;
+  }
+  topicListEl.innerHTML = topics.map((t, i) => `
+    <div class="topic-option">
+      <input type="checkbox" id="topic-${i}" value="${t}">
+      <label for="topic-${i}">${t}</label>
+    </div>
+  `).join('');
+  topicListEl.addEventListener('change', updateStartButtonState);
+
+  // Pre-select topic(s) passed in via ?topic=... (e.g. linked from a specific
+  // document's study guide page) — this only checks the box, it never starts
+  // the session automatically.
+  const params = new URLSearchParams(window.location.search);
+  const preselect = params.get('topic');
+  if (preselect) {
+    const wanted = new Set(preselect.split(',').map(t => t.trim()).filter(Boolean));
+    topicListEl.querySelectorAll('input[type="checkbox"]').forEach(input => {
+      if (wanted.has(input.value)) input.checked = true;
+    });
+    updateStartButtonState();
+  }
+}
+
+startBtn.addEventListener('click', async () => {
+  errorEl.style.display = 'none';
+  const topics = Array.from(topicListEl.querySelectorAll('input:checked')).map(el => el.value);
+  startBtn.disabled = true;
+  startBtn.textContent = 'Starting...';
+
+  try {
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topics }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to start session');
+
+    sessionId = data.session_id;
+    topicSelectEl.style.display = 'none';
+
+    if (data.session_complete) {
+      renderSummary(data);
+    } else {
+      renderQuestion(data);
+    }
+  } catch (err) {
+    showError(err.message);
+    startBtn.disabled = false;
+    startBtn.textContent = 'Start Session';
+  }
+});
+
+submitAnswerBtn.addEventListener('click', async () => {
+  errorEl.style.display = 'none';
+  const answer = answerInputEl.value.trim();
+  if (!answer) return;
+
+  submitAnswerBtn.disabled = true;
+  answerInputEl.disabled = true;
+
+  try {
+    const res = await fetch(`/api/sessions/${sessionId}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question_id: currentQuestion.id, answer }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to submit answer');
+
+    feedbackCardEl.className = data.graded_correct;
+    feedbackGradeEl.textContent = data.graded_correct;
+    feedbackTextEl.textContent = data.feedback;
+
+    if (data.concept_reveal) {
+      conceptRevealEl.style.display = 'block';
+      conceptRevealEl.innerHTML = `<strong>Concept:</strong> ${data.concept_reveal}`;
+    } else {
+      conceptRevealEl.style.display = 'none';
+    }
+
+    feedbackCardEl.style.display = 'block';
+    feedbackCardEl.dataset.next = JSON.stringify(data);
+  } catch (err) {
+    showError(err.message);
+    submitAnswerBtn.disabled = false;
+    answerInputEl.disabled = false;
+  }
+});
+
+continueBtn.addEventListener('click', () => {
+  const data = JSON.parse(feedbackCardEl.dataset.next);
+  if (data.session_complete) {
+    renderSummary(data);
+  } else {
+    renderQuestion(data);
+  }
+});
+
+loadTopics();
+</script>
+
+</body>
+</html>

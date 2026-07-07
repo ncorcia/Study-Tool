@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Study Tool — Study Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  window.MathJax = {
+    // Inline $...$ is deliberately not configured: this content is finance
+    // material full of bare currency amounts like "$500M ... $625M" on the
+    // same line, which would otherwise get misread as an inline math span.
+    tex: {
+      displayMath: [['$$', '$$']]
+    },
+    startup: { typeset: false }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script" async></script>
+</head>
+<body>
+
+<nav class="main-nav">
+  <div class="main-nav-links">
+    <a href="/">Upload</a>
+    <a href="/quiz.html">Quiz</a>
+    <a href="/history.html">History</a>
+  </div>
+  <div class="main-nav-account">
+    <span id="current-user-email"></span>
+    <a href="#" id="logout-link">Log Out</a>
+  </div>
+</nav>
+<script src="/static/nav.js"></script>
+
+<h1 id="doc-title">Study Guide</h1>
+<div id="doc-meta"></div>
+<div style="margin: 14px 0 24px;">
+  <a id="start-quiz-link" href="#" style="display:none;"><button type="button">Start Quiz</button></a>
+</div>
+
+<button id="generate-btn">Generate Study Guide</button>
+<div id="status"></div>
+<div id="error"></div>
+
+<div class="card">
+  <div id="guide-meta"></div>
+  <div id="guide-content"></div>
+</div>
+
+<div id="questions-section">
+  <h2>Question Bank</h2>
+  <button id="generate-questions-btn" disabled>Generate Question Bank</button>
+  <div id="questions-status"></div>
+  <div id="questions-error"></div>
+  <div id="questions-meta"></div>
+  <div id="questions-content"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const documentId = params.get('document_id');
+
+const docTitleEl = document.getElementById('doc-title');
+const docMetaEl = document.getElementById('doc-meta');
+const generateBtn = document.getElementById('generate-btn');
+const statusEl = document.getElementById('status');
+const errorEl = document.getElementById('error');
+const guideMetaEl = document.getElementById('guide-meta');
+const guideContentEl = document.getElementById('guide-content');
+
+const generateQuestionsBtn = document.getElementById('generate-questions-btn');
+const questionsStatusEl = document.getElementById('questions-status');
+const questionsErrorEl = document.getElementById('questions-error');
+const questionsMetaEl = document.getElementById('questions-meta');
+const questionsContentEl = document.getElementById('questions-content');
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Markdown parsing can mangle LaTeX (underscores as emphasis, etc.), so pull
+// $$...$$ blocks out before marked runs and splice the raw text back in after.
+// Only $$ display math is handled — this content is finance material full of
+// bare currency amounts (e.g. "$500M ... $625M" on one line), so a single-$
+// inline-math regex would misread currency pairs as math spans.
+function protectMath(markdown) {
+  const store = [];
+  const text = markdown.replace(/\$\$([\s\S]+?)\$\$/g, (match) => {
+    store.push(escapeHtml(match));
+    return `@@MATH${store.length - 1}@@`;
+  });
+  return { text, store };
+}
+
+function restoreMath(html, store) {
+  return html.replace(/@@MATH(\d+)@@/g, (_, i) => store[Number(i)]);
+}
+
+// window.MathJax.startup exists as soon as our config script runs (it's just
+// our plain config object), well before the async CDN script has downloaded
+// and attached the real typesetPromise function — so poll for the real thing
+// rather than trusting startup's presence.
+function waitForMathJax() {
+  return new Promise((resolve) => {
+    (function check() {
+      if (window.MathJax && typeof window.MathJax.typesetPromise === 'function') {
+        resolve();
+      } else {
+        setTimeout(check, 50);
+      }
+    })();
+  });
+}
+
+async function typesetMath() {
+  await waitForMathJax();
+  await window.MathJax.typesetPromise([guideContentEl]);
+}
+
+function renderGuide(guide) {
+  const { text, store } = protectMath(guide.content);
+  guideContentEl.innerHTML = restoreMath(marked.parse(text), store);
+  guideMetaEl.textContent = `Generated at ${new Date(guide.generated_at).toLocaleString()}`;
+  generateBtn.textContent = 'Regenerate Study Guide';
+  typesetMath();
+  generateQuestionsBtn.disabled = false;
+}
+
+const TYPE_BADGE_CLASS = {
+  'Calibration': 'calibration',
+  'Main': 'main',
+  'Follow-up · Deeper': 'deeper',
+  'Follow-up · Remedial': 'remedial',
+};
+
+function questionCard(question, typeLabel) {
+  const badgeClass = TYPE_BADGE_CLASS[typeLabel] || '';
+  return `
+    <div class="question-card">
+      <div class="type-badge ${badgeClass}">${escapeHtml(typeLabel)}</div>
+      <div class="qtext">${escapeHtml(question.question_text)}</div>
+      <div class="qref"><strong>Reference:</strong> ${escapeHtml(question.reference_answer)}</div>
+    </div>
+  `;
+}
+
+function renderQuestionBank(bank) {
+  let html = '';
+
+  if (bank.calibration.length) {
+    html += `<h3>Calibration Questions</h3>`;
+    html += bank.calibration.map(q => questionCard(q, 'Calibration')).join('');
+  }
+
+  if (bank.concepts.length) {
+    html += `<h3 style="margin-top:28px;">Concepts (${bank.concepts.length})</h3>`;
+    html += bank.concepts.map(c => `
+      <div class="concept-group">
+        ${questionCard(c.main, 'Main')}
+        ${c.followup_deeper ? questionCard(c.followup_deeper, 'Follow-up · Deeper') : ''}
+        ${c.followup_remedial ? questionCard(c.followup_remedial, 'Follow-up · Remedial') : ''}
+      </div>
+    `).join('');
+  }
+
+  questionsContentEl.innerHTML = html;
+  questionsMetaEl.textContent =
+    `${bank.calibration.length} calibration questions, ${bank.concepts.length} concepts (` +
+    `${bank.concepts.length * 3} main + follow-up questions)`;
+  generateQuestionsBtn.textContent = 'Regenerate Question Bank';
+}
+
+async function loadDocument() {
+  const res = await fetch(`/api/documents/${documentId}`);
+  const doc = await res.json();
+  docTitleEl.textContent = `Study Guide — ${doc.filename}`;
+  docMetaEl.textContent = `Topic: ${doc.topic || '(none)'}  |  ${doc.raw_text.length} characters extracted`;
+
+  if (doc.topic) {
+    const startQuizLink = document.getElementById('start-quiz-link');
+    startQuizLink.href = `/quiz.html?topic=${encodeURIComponent(doc.topic)}`;
+    startQuizLink.style.display = 'inline-block';
+  }
+}
+
+async function loadExistingGuide() {
+  const res = await fetch(`/api/documents/${documentId}/study_guide`);
+  if (res.ok) {
+    renderGuide(await res.json());
+  }
+}
+
+async function loadExistingQuestionBank() {
+  const res = await fetch(`/api/documents/${documentId}/questions`);
+  if (res.ok) {
+    renderQuestionBank(await res.json());
+  }
+}
+
+generateQuestionsBtn.addEventListener('click', async () => {
+  questionsErrorEl.style.display = 'none';
+  generateQuestionsBtn.disabled = true;
+  questionsStatusEl.textContent = 'Generating question bank via Claude API... this can take a minute or two.';
+
+  try {
+    const res = await fetch(`/api/documents/${documentId}/questions`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Generation failed');
+    renderQuestionBank(data);
+    questionsStatusEl.textContent = '';
+  } catch (err) {
+    questionsErrorEl.style.display = 'block';
+    questionsErrorEl.textContent = err.message;
+    questionsStatusEl.textContent = '';
+  } finally {
+    generateQuestionsBtn.disabled = false;
+  }
+});
+
+generateBtn.addEventListener('click', async () => {
+  errorEl.style.display = 'none';
+  generateBtn.disabled = true;
+  statusEl.textContent = 'Generating study guide via Claude API... this can take up to a minute.';
+
+  try {
+    const res = await fetch(`/api/documents/${documentId}/study_guide`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Generation failed');
+    renderGuide(data);
+    statusEl.textContent = '';
+  } catch (err) {
+    errorEl.style.display = 'block';
+    errorEl.textContent = err.message;
+    statusEl.textContent = '';
+  } finally {
+    generateBtn.disabled = false;
+  }
+});
+
+if (!documentId) {
+  errorEl.style.display = 'block';
+  errorEl.textContent = 'No document_id provided in the URL.';
+  generateBtn.disabled = true;
+} else {
+  loadDocument();
+  loadExistingGuide();
+  loadExistingQuestionBank();
+}
+</script>
+
+</body>
+</html>

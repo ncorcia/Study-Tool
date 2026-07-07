@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Study Tool — Upload</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav class="main-nav">
+  <div class="main-nav-links">
+    <a href="/">Upload</a>
+    <a href="/quiz.html">Quiz</a>
+    <a href="/history.html">History</a>
+  </div>
+  <div class="main-nav-account">
+    <span id="current-user-email"></span>
+    <a href="#" id="logout-link">Log Out</a>
+  </div>
+</nav>
+<script src="/static/nav.js"></script>
+
+<h1>Upload Document</h1>
+
+<form id="upload-form" class="card">
+  <div>
+    <label for="topic">Topic</label><br>
+    <input type="text" id="topic" name="topic" placeholder="e.g. LBO Key Rules" required>
+  </div>
+  <div>
+    <label for="file">PDF or DOCX file</label><br>
+    <input type="file" id="file" name="file" accept=".pdf,.docx" required>
+  </div>
+  <button type="submit" id="submit-btn">Upload</button>
+</form>
+
+<div id="error"></div>
+<div id="result"></div>
+
+<div id="documents" class="card">
+  <h2 style="margin-top:0;">Uploaded Documents</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Filename</th><th>Topic</th><th>Chars</th><th>Uploaded</th><th></th><th></th>
+    </thead>
+    <tbody id="documents-body"></tbody>
+  </table>
+</div>
+
+<script>
+const form = document.getElementById('upload-form');
+const submitBtn = document.getElementById('submit-btn');
+const resultEl = document.getElementById('result');
+const errorEl = document.getElementById('error');
+const documentsBody = document.getElementById('documents-body');
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadDocuments() {
+  const res = await fetch('/api/documents');
+  const docs = await res.json();
+  documentsBody.innerHTML = docs.map(d => `
+    <tr>
+      <td>${d.id}</td>
+      <td>${escapeHtml(d.filename)}</td>
+      <td>${escapeHtml(d.topic || '')}</td>
+      <td>${d.text_length}</td>
+      <td>${new Date(d.uploaded_at).toLocaleString()}</td>
+      <td><a href="/study_guide.html?document_id=${d.id}">Study Guide</a></td>
+      <td><a class="delete-link" data-id="${d.id}" data-filename="${escapeHtml(d.filename)}">Delete</a></td>
+    </tr>
+  `).join('');
+}
+
+documentsBody.addEventListener('click', async (e) => {
+  const link = e.target.closest('.delete-link');
+  if (!link) return;
+
+  const id = link.dataset.id;
+  const filename = link.dataset.filename;
+  const confirmed = confirm(
+    `Delete "${filename}"? This will permanently remove the document, its study guide, ` +
+    `question bank, and all related questions. This cannot be undone.`
+  );
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to delete document');
+    }
+    loadDocuments();
+  } catch (err) {
+    errorEl.style.display = 'block';
+    errorEl.textContent = err.message;
+  }
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.style.display = 'none';
+  resultEl.style.display = 'none';
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Uploading...';
+
+  const formData = new FormData();
+  formData.append('topic', document.getElementById('topic').value);
+  formData.append('file', document.getElementById('file').files[0]);
+
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Upload failed');
+
+    resultEl.style.display = 'block';
+    resultEl.textContent =
+      `Uploaded: ${data.filename}\nTopic: ${data.topic}\nExtracted ${data.text_length} characters.\n\n--- Preview ---\n${data.text_preview}`;
+
+    form.reset();
+    loadDocuments();
+  } catch (err) {
+    errorEl.style.display = 'block';
+    errorEl.textContent = err.message;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Upload';
+  }
+});
+
+loadDocuments();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pdfplumber
+python-docx
+anthropic
+python-dotenv
+passlib
+bcrypt==4.0.1
+itsdangerous
