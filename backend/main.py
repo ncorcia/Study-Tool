@@ -5,6 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Loaded before any first-party import below: database.py reads DATA_DIR from
+# the environment at import time, so .env must already be loaded by then for
+# local dev to pick it up. A real deploy env var doesn't have this hazard
+# (it's set before the process starts), but this keeps the two paths consistent.
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
@@ -15,13 +23,11 @@ import auth
 import history
 import session_runner
 import users as users_db
-from database import get_connection, init_db
+from database import DATA_DIR, get_connection, init_db
 from generation import question_bank, study_guide
 from parsers import docx_parser, pdf_parser
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
-UPLOADS_DIR = BASE_DIR / "data" / "uploads"
+UPLOADS_DIR = DATA_DIR / "uploads"
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY")

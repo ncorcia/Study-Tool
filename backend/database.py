@@ -1,9 +1,15 @@
 """SQLite schema and connection helpers for the study tool."""
 
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "study_tool.db"
+# DATA_DIR defaults to <repo_root>/data for local dev. In production, set the
+# DATA_DIR env var to a mounted persistent disk's path — a hosting platform's
+# web service filesystem is otherwise ephemeral, and the database and
+# uploaded files would be wiped on every deploy.
+DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.parent / "data"))
+DB_PATH = DATA_DIR / "study_tool.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
